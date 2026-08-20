@@ -31,17 +31,22 @@ class Assumptions:
     cny_to_kes: float = 18.5
     usd_to_kes: float = 131.0
 
-    # 跨境专线运费（首重 + 续重结构）—— 按货代报价填
-    freight_first_kg: float = 0.5          # 首重重量 (kg)
-    freight_first_usd: float = 10.0        # 首重费用 (USD)
-    freight_addl_usd_per_kg: float = 6.5   # 续重费用 (USD/kg)
-    volumetric_divisor: int = 6000         # 体积重系数 (cm^3/kg)，空运常用 6000
+    # 跨境运费 —— 按货代报价填
+    # mode="linear": 国内集货成大包裹整批空运，线性 USD/kg（当前实际模式）
+    # mode="parcel": 单票小包，首重 + 续重结构（保留用于对比）
+    freight_mode: str = "linear"
+    freight_linear_usd_per_kg: float = 12.0   # 集货整批，双清包税
+    freight_first_kg: float = 0.5             # parcel 模式：首重重量 (kg)
+    freight_first_usd: float = 10.0           # parcel 模式：首重费用 (USD)
+    freight_addl_usd_per_kg: float = 6.5      # parcel 模式：续重费用 (USD/kg)
+    volumetric_divisor: int = 6000            # 体积重系数 (cm^3/kg)，空运常用 6000
 
     # 中国端成本
     qc_handling_cny: float = 3.5           # 转运仓开箱验货 + 换箱 + 贴单
     domestic_cn_freight_cny: float = 8.0   # 1688 到转运仓的国内快递
 
     # 肯尼亚端成本
+    repack_kes: float = 80.0               # 到肯尼亚后拆包、重新打包、分拣
     last_mile_cost_kes: float = 350.0      # 你付给本地配送的钱
     last_mile_charged_kes: float = 300.0   # 你向客户收的配送费
     payment_fee_pct: float = 0.02          # M-Pesa / 支付网关费率
@@ -83,14 +88,21 @@ def chargeable_weight(p: Product, a: Assumptions) -> float:
 
 
 def freight_kes(p: Product, a: Assumptions) -> float:
-    """一票的跨境运费，按首重+续重；一票多件时按总计费重算，再摊到每件"""
-    cw = chargeable_weight(p, a) * a.items_per_parcel
-    if cw <= a.freight_first_kg:
+    """单件跨境运费 (KES)。
+
+    linear 模式：国内集货成大包裹整批空运，按计费重线性计价，无首重惩罚。
+                 因此并单不再产生跨境运费节省（只省肯尼亚端的最后一公里）。
+    parcel 模式：单票小包，首重 + 续重。
+    """
+    cw = chargeable_weight(p, a)
+    if a.freight_mode == "linear":
+        return cw * a.freight_linear_usd_per_kg * a.usd_to_kes
+    total_cw = cw * a.items_per_parcel
+    if total_cw <= a.freight_first_kg:
         usd = a.freight_first_usd
     else:
-        usd = a.freight_first_usd + (cw - a.freight_first_kg) * a.freight_addl_usd_per_kg
-    per_item_usd = usd / a.items_per_parcel
-    return per_item_usd * a.usd_to_kes
+        usd = a.freight_first_usd + (total_cw - a.freight_first_kg) * a.freight_addl_usd_per_kg
+    return (usd / a.items_per_parcel) * a.usd_to_kes
 
 
 def landed_cost(p: Product, a: Assumptions) -> dict:
@@ -108,13 +120,14 @@ def landed_cost(p: Product, a: Assumptions) -> dict:
         levy = cif * p.misc_levy_rate
         tax = duty + levy + (cif + duty + levy) * p.vat_rate
 
-    total = goods + cn_domestic + qc + fr + tax
+    total = goods + cn_domestic + qc + fr + tax + a.repack_kes
     return {
         "货值": goods,
         "国内快递": cn_domestic,
         "验货/转运": qc,
         "跨境运费": fr,
         "税费": tax,
+        "肯尼亚拆包重打": a.repack_kes,
         "落地成本": total,
     }
 
@@ -242,15 +255,18 @@ def max_sourcing_price(price_kes, weight_kg, a, target_landed_ratio=0.35):
 
 
 def sourcing_table(a,
-                   prices=(6000, 8000, 10000, 12000, 15000, 20000),
-                   weights=(0.3, 0.5, 1.0, 1.5, 2.0, 3.0),
+                   prices=(3000, 4000, 6000, 8000, 10000, 12000, 15000),
+                   weights=(0.2, 0.3, 0.5, 1.0, 1.5, 2.0, 3.0),
                    target_landed_ratio=0.35):
     print()
     print(f"  1688 采购价上限 (CNY) —— 约束：落地成本 <= 售价 x {target_landed_ratio:.0%}"
           f"（即售价 >= 落地成本 x {1/target_landed_ratio:.1f}）")
-    print(f"  首重 {a.freight_first_kg}kg/${a.freight_first_usd:.0f}"
-          f"   续重 ${a.freight_addl_usd_per_kg:.1f}/kg"
-          f"   CNY->KES {a.cny_to_kes}   USD->KES {a.usd_to_kes}")
+    if a.freight_mode == "linear":
+        rate = f"集货整批 ${a.freight_linear_usd_per_kg:.0f}/kg（线性，双清包税）"
+    else:
+        rate = (f"单票小包 首重 {a.freight_first_kg}kg/${a.freight_first_usd:.0f}"
+                f" 续重 ${a.freight_addl_usd_per_kg:.1f}/kg")
+    print(f"  {rate}   CNY->KES {a.cny_to_kes}   USD->KES {a.usd_to_kes}")
     print()
     hdr = "  售价\\计费重" + "".join(f"{w:>10.1f}kg" for w in weights)
     print(hdr)
@@ -264,6 +280,28 @@ def sourcing_table(a,
     print()
     print("  读法：一个 1kg 的品若想卖 12,000 KES，1688 采购价须低于表中对应值，否则毛利撑不住。")
     print("  '--' = 该重量下跨境运费已吃掉全部成本预算，此售价档不可行。")
+
+
+def price_floor_table(a, cpas=(600, 800, 1200, 1600, 2000, 2400, 3000),
+                      targets=(0.0, 0.25, 0.30)):
+    """集货线性运费下，绑定约束是 CPA 而非运费。此表给出各 CPA 对应的最低售价。"""
+    print()
+    print("  售价下限 = f(CPA)   —— 集货模式下，运费不再是价格下限的决定因素")
+    print(f"  （假设落地成本 = 售价 x 35%；支付 {a.payment_fee_pct:.0%}；"
+          f"退款预留 {a.refund_reserve_pct:.0%}；配送净支出与客服固定）")
+    print()
+    fixed = (a.last_mile_cost_kes - a.last_mile_charged_kes) + a.cs_cost_kes
+    print(f"  {'CPA':>8} " + "".join(f"{'贡献率'+f'{t:.0%}':>14}" for t in targets))
+    print("  " + "-" * (9 + 14 * len(targets)))
+    for cpa in cpas:
+        row = f"  {cpa:>8,} "
+        for t in targets:
+            denom = 1 - 0.35 - a.payment_fee_pct - a.refund_reserve_pct - t
+            row += f"{(cpa + fixed) / denom:>14,.0f}"
+        print(row)
+    print()
+    print("  读法：CPA 2,000 时，售价至少 6,781 KES 才有 25% 贡献毛利率。")
+    print("  推论：降低 CPA（老客复购 / 自然流量 / WhatsApp 私域）会直接打开低价品的可做区间。")
 
 
 DEMO = [
@@ -288,9 +326,16 @@ def main():
     ap.add_argument("--name", type=str, default="自定义 SKU")
     ap.add_argument("--sweep", action="store_true", help="输出售价敏感性表")
     ap.add_argument("--table", action="store_true", help="选品台速查表：按售价与重量反推采购价上限")
+    ap.add_argument("--freight-mode", choices=("linear", "parcel"), help="linear=国内集货整批（默认）, parcel=单票小包")
+    ap.add_argument("--rate", type=float, help="linear 模式的 USD/kg")
+    ap.add_argument("--floor", action="store_true", help="售价下限表：各 CPA 对应的最低售价")
     args = ap.parse_args()
 
     a = Assumptions()
+    if args.freight_mode:
+        a.freight_mode = args.freight_mode
+    if args.rate is not None:
+        a.freight_linear_usd_per_kg = args.rate
     if args.cpa is not None:
         a.cpa_kes = args.cpa
     if args.items_per_parcel is not None:
@@ -300,6 +345,10 @@ def main():
 
     if args.table:
         sourcing_table(a)
+        return
+
+    if args.floor:
+        price_floor_table(a)
         return
 
     if args.cost_cny is None or args.weight is None:
