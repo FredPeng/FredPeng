@@ -229,6 +229,43 @@ def sweep(p: Product, a: Assumptions, lo: float, hi: float, step: float):
         price += step
 
 
+# --------------------------------------------------------------------------
+# 选品台速查表：给定售价与重量，反推 1688 采购价上限
+# --------------------------------------------------------------------------
+
+def max_sourcing_price(price_kes, weight_kg, a, target_landed_ratio=0.35):
+    """在「落地成本 <= 售价 x ratio」约束下，1688 单件采购价上限 (CNY)"""
+    probe = Product("probe", cost_cny=0, weight_kg=weight_kg)
+    overhead = landed_cost(probe, a)["落地成本"]   # cost_cny=0 => 除货值外的全部成本
+    budget = price_kes * target_landed_ratio - overhead
+    return max(0.0, budget / a.cny_to_kes)
+
+
+def sourcing_table(a,
+                   prices=(6000, 8000, 10000, 12000, 15000, 20000),
+                   weights=(0.3, 0.5, 1.0, 1.5, 2.0, 3.0),
+                   target_landed_ratio=0.35):
+    print()
+    print(f"  1688 采购价上限 (CNY) —— 约束：落地成本 <= 售价 x {target_landed_ratio:.0%}"
+          f"（即售价 >= 落地成本 x {1/target_landed_ratio:.1f}）")
+    print(f"  首重 {a.freight_first_kg}kg/${a.freight_first_usd:.0f}"
+          f"   续重 ${a.freight_addl_usd_per_kg:.1f}/kg"
+          f"   CNY->KES {a.cny_to_kes}   USD->KES {a.usd_to_kes}")
+    print()
+    hdr = "  售价\\计费重" + "".join(f"{w:>10.1f}kg" for w in weights)
+    print(hdr)
+    print("  " + "-" * (len(hdr) - 2))
+    for pr in prices:
+        cells = ""
+        for w in weights:
+            v = max_sourcing_price(pr, w, a, target_landed_ratio)
+            cells += f"{v:>10.0f}  " if v > 0 else f"{'--':>10}  "
+        print(f"  {pr:>9,}" + cells)
+    print()
+    print("  读法：一个 1kg 的品若想卖 12,000 KES，1688 采购价须低于表中对应值，否则毛利撑不住。")
+    print("  '--' = 该重量下跨境运费已吃掉全部成本预算，此售价档不可行。")
+
+
 DEMO = [
     # 反例：低价小件 —— 一件代发下运费吃掉一切
     (Product("反例 A：低价小件（3,000 KES 档）", cost_cny=55, weight_kg=0.5), 3000),
@@ -250,6 +287,7 @@ def main():
     ap.add_argument("--refund-reserve", type=float, help="退款预留比例，如 0.06")
     ap.add_argument("--name", type=str, default="自定义 SKU")
     ap.add_argument("--sweep", action="store_true", help="输出售价敏感性表")
+    ap.add_argument("--table", action="store_true", help="选品台速查表：按售价与重量反推采购价上限")
     args = ap.parse_args()
 
     a = Assumptions()
@@ -259,6 +297,10 @@ def main():
         a.items_per_parcel = args.items_per_parcel
     if args.refund_reserve is not None:
         a.refund_reserve_pct = args.refund_reserve
+
+    if args.table:
+        sourcing_table(a)
+        return
 
     if args.cost_cny is None or args.weight is None:
         print("\n【内置示例】所有费率为占位默认值，用你的真实报价替换后再做决策。")
