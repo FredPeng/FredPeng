@@ -573,6 +573,53 @@ WooCommerce 接 **Daraja API STK Push**。若当前是"转账到 Paybill 再粘�
 
 ---
 
+## 选品流水线
+
+```
+  discover.py          enrich_1688.py         screen.py           listing.py
+  速卖通侧采集    ->    1688 侧补数      ->    判生死        ->    上架
+  需求信号+素材        价格/重量/体积         落地成本/定价       WooCommerce CSV
+```
+
+```bash
+python3 tools/discover.py --source csv raw.csv -o queue.csv
+python3 tools/enrich_1688.py ask queue.csv -o inquiries.txt     # 生成询盘
+#   ... 发给供应商，回复按 ===== [n] ===== 分隔贴进 replies.txt
+python3 tools/enrich_1688.py parse queue.csv replies.txt -o enriched.csv
+python3 tools/screen.py enriched.csv
+python3 tools/listing.py enriched.csv -o woo.csv
+```
+
+### 为什么爬虫只能做一半
+
+选品规则跨两个数据源：
+
+| 数据源 | 提供 | 能否自动获取 |
+|---|---|---|
+| 速卖通 | 售价、销量、评论、图片数、视频 | ✅ 联盟 API 或页面 |
+| 1688 | 采购价、起订量、供应商、同款 | ✅ 开放平台 API（需企业认证+订购） |
+| 1688 | **准确实重、外箱尺寸、能否散装** | ❌ **页面常常没有，API 也给不了** |
+
+而抛货比 5000 下，**体积就是成本** —— 决定生死的恰恰是拿不到的那三项。
+
+> **所以该自动化的不是「查」，是「问」和「解析回复」。**
+> `enrich_1688.py ask` 批量生成标准询盘（含压缩体积那一问，单件可值 5,000+ KES），
+> `parse` 把供应商的自由文本回复批量解析回结构化字段。
+> 解析提示词明令禁止估算 —— 答得含糊就置 null 并列入 `unanswered` 待追问，
+> **因为这些数字决定盈亏，一个猜测比一个空值危险得多。**
+
+### 数据源可插拔
+
+`discover.py --source` 三选一，下游不受影响：
+
+| 源 | 覆盖 | 稳定性 | 代价 |
+|---|---|---|---|
+| `csv` | 手工整理 | 高 | 今天就能用，零风险 |
+| `affiliate` | ⚠️ 仅联盟目录（速卖通商品的子集） | 高 | 需申请审批 |
+| `html` | 全量 | 低 | 违反 ToS；结构不定期变；**不含任何反爬绕过**，遇验证码即停 |
+
+---
+
 ## 自动化路线图
 
 **原则：AI 做执行，规则做判断。** 凡是要花钱的决策（杀量 / 放量 / 采购）一律用确定性规则引擎，
@@ -582,7 +629,7 @@ WooCommerce 接 **Daraja API STK Push**。若当前是"转账到 Paybill 再粘�
 |---|---|---|---|---|
 | 1 | 选品硬过滤 + 定价 | 100%（纯规则） | ✅ `tools/screen.py` | — |
 | 2 | 上架生成（标题/规格/SEO/FAQ/WooCommerce CSV） | ~90% | ✅ `tools/listing.py` | 需 API key |
-| 3 | 选品数据采集（1688 价格尺寸、速卖通信号） | ~60% | ⬜ | 需官方 API 或采集方案 |
+| 3 | 选品数据采集 | ~60% | ✅ `discover.py` + `enrich_1688.py` | 重量/体积须问供应商 |
 | 4 | 图片处理（去水印、统一比例、加 KES 角标） | ~95% | ⬜ | **无阻塞，下一个该做** |
 | 5 | 广告素材加工（剪 3 个 hook、加字幕、加价格） | ~70% | ⬜ | **无阻塞，需 ffmpeg** |
 | 6 | 投放杀/放量决策 | 100%（规则引擎） | ⬜ | 需广告平台 API |
