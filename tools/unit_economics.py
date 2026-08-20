@@ -52,6 +52,11 @@ class Assumptions:
     payment_fee_pct: float = 0.02          # M-Pesa / 支付网关费率
     cs_cost_kes: float = 120.0             # 分摊到每单的客服成本（预付模式要全程告知，比有货时重）
 
+    # VAT：双清包税拿不到你公司名下的进口报关单 => 无进项可抵。
+    # 肯尼亚 VAT 注册门槛为年营业额 500 万先令；注册后销项 16% 全额从利润里出。
+    vat_registered: bool = False
+    vat_rate_output: float = 0.16          # 展示价含税，销项 = 售价 x 16/116
+
     # 风险预留 —— 零备货 + 预付模式下这项显著高于有备货模式
     refund_reserve_pct: float = 0.06       # 退款 / 丢件 / 换货 / 扣关
 
@@ -140,7 +145,8 @@ def economics(p: Product, a: Assumptions, price_kes: float) -> dict:
     delivery_net = a.last_mile_cost_kes - a.last_mile_charged_kes
     payment = price_kes * a.payment_fee_pct
     refund = price_kes * a.refund_reserve_pct
-    variable = a.cpa_kes + delivery_net + payment + refund + a.cs_cost_kes
+    vat = price_kes * a.vat_rate_output / (1 + a.vat_rate_output) if a.vat_registered else 0.0
+    variable = a.cpa_kes + delivery_net + payment + refund + a.cs_cost_kes + vat
 
     contribution = gross - variable
 
@@ -160,9 +166,10 @@ def economics(p: Product, a: Assumptions, price_kes: float) -> dict:
         "支付费": payment,
         "退款预留": refund,
         "客服": a.cs_cost_kes,
+        "销项VAT": vat,
         "贡献额": contribution,
         "贡献毛利率": contribution / price_kes if price_kes else 0,
-        "盈亏平衡CPA": breakeven_cpa,
+        "盈亏平衡CPA": breakeven_cpa - vat,
     }
 
 
@@ -171,8 +178,9 @@ def price_for_target(p: Product, a: Assumptions, target_contrib_pct: float) -> f
     lc = landed_cost(p, a)
     cost = lc["落地成本"]
     fixed = a.cpa_kes + (a.last_mile_cost_kes - a.last_mile_charged_kes) + a.cs_cost_kes
-    # P - cost - fixed - P*(pay + refund) = target * P
-    denom = 1 - a.payment_fee_pct - a.refund_reserve_pct - target_contrib_pct
+    vat_pct = a.vat_rate_output / (1 + a.vat_rate_output) if a.vat_registered else 0.0
+    # P - cost - fixed - P*(pay + refund + vat) = target * P
+    denom = 1 - a.payment_fee_pct - a.refund_reserve_pct - vat_pct - target_contrib_pct
     if denom <= 0:
         return float("inf")
     return (cost + fixed) / denom
@@ -209,6 +217,8 @@ def report(p: Product, a: Assumptions, price: float):
     print(f"    {'支付手续费':<12}{kes(-e['支付费'])}")
     print(f"    {'退款预留':<12}{kes(-e['退款预留'])}")
     print(f"    {'客服':<12}{kes(-e['客服'])}")
+    if e['销项VAT']:
+        print(f"    {'销项VAT(无进项)':<12}{kes(-e['销项VAT'])}")
     print(f"    {'-'*40}")
     print(f"    {'贡献额':<12}{kes(e['贡献额'])}   贡献毛利率 {pct(e['贡献毛利率'])}")
 
@@ -329,9 +339,12 @@ def main():
     ap.add_argument("--freight-mode", choices=("linear", "parcel"), help="linear=国内集货整批（默认）, parcel=单票小包")
     ap.add_argument("--rate", type=float, help="linear 模式的 USD/kg")
     ap.add_argument("--floor", action="store_true", help="售价下限表：各 CPA 对应的最低售价")
+    ap.add_argument("--vat", action="store_true", help="已注册 VAT：加 16% 销项，双清包税下无进项可抵")
     args = ap.parse_args()
 
     a = Assumptions()
+    if args.vat:
+        a.vat_registered = True
     if args.freight_mode:
         a.freight_mode = args.freight_mode
     if args.rate is not None:
