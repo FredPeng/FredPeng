@@ -39,7 +39,7 @@ class Assumptions:
     freight_first_kg: float = 0.5             # parcel 模式：首重重量 (kg)
     freight_first_usd: float = 10.0           # parcel 模式：首重费用 (USD)
     freight_addl_usd_per_kg: float = 6.5      # parcel 模式：续重费用 (USD/kg)
-    volumetric_divisor: int = 6000            # 体积重系数 (cm^3/kg)，空运常用 6000
+    volumetric_divisor: int = 5000            # 体积重系数 (cm^3/kg)，货代实际报价
 
     # 中国端成本
     qc_handling_cny: float = 3.5           # 转运仓开箱验货 + 换箱 + 贴单
@@ -199,8 +199,18 @@ def report(p: Product, a: Assumptions, price: float):
     print(f"\n{'='*62}")
     print(f"  {p.name}")
     print(f"{'='*62}")
-    print(f"  1688 采购 ¥{p.cost_cny:.0f}   实重 {p.weight_kg}kg   计费重 {chargeable_weight(p,a):.2f}kg"
-          f"   一票 {a.items_per_parcel} 件")
+    cw = chargeable_weight(p, a)
+    line = f"  1688 采购 ¥{p.cost_cny:.0f}   实重 {p.weight_kg}kg   计费重 {cw:.2f}kg"
+    if p.dims_cm:
+        l, w, h = p.dims_cm
+        vol = l * w * h
+        bulky = vol / a.volumetric_divisor > p.weight_kg
+        line += f"   体积 {l:.0f}x{w:.0f}x{h:.0f}cm = {vol/1000:.1f}L"
+        line += "   [抛货：按体积计费]" if bulky else "   [按实重计费]"
+    print(line)
+    if p.dims_cm is None:
+        print(f"  ⚠ 未填 --dims，按实重计费。抛货比 {a.volumetric_divisor}："
+              f"实重 {p.weight_kg}kg 的品体积超过 {p.weight_kg*a.volumetric_divisor/1000:.1f}L 即按体积计费")
 
     print(f"\n  落地成本拆解 (KES)")
     for k, v in e["落地明细"].items():
@@ -288,7 +298,7 @@ def sourcing_table(a,
             cells += f"{v:>10.0f}  " if v > 0 else f"{'--':>10}  "
         print(f"  {pr:>9,}" + cells)
     print()
-    print("  读法：一个 1kg 的品若想卖 12,000 KES，1688 采购价须低于表中对应值，否则毛利撑不住。")
+    print("  读法：横轴是**计费重**（体积重与实重取大者），不是实重 —— 先按下表算出计费重再查。")
     print("  '--' = 该重量下跨境运费已吃掉全部成本预算，此售价档不可行。")
 
 
@@ -312,6 +322,25 @@ def price_floor_table(a, cpas=(600, 800, 1200, 1600, 2000, 2400, 3000),
     print()
     print("  读法：CPA 2,000 时，售价至少 6,781 KES 才有 25% 贡献毛利率。")
     print("  推论：降低 CPA（老客复购 / 自然流量 / WhatsApp 私域）会直接打开低价品的可做区间。")
+
+
+def box_table(a, boxes=((20,15,10),(25,20,10),(30,20,15),(35,25,15),(40,30,20),(50,35,25))):
+    """按外箱尺寸查计费重与运费 —— 抛货比下运费实际按箱子大小收，与内容物无关。"""
+    rate = a.freight_linear_usd_per_kg * a.usd_to_kes
+    print()
+    print(f"  外箱尺寸 -> 计费重 -> 跨境运费   （抛货比 {a.volumetric_divisor}，"
+          f"${a.freight_linear_usd_per_kg:.0f}/kg = {rate:,.0f} KES/kg）")
+    print()
+    print(f"  {'外箱 (cm)':<16}{'体积':>8}{'体积重':>9}{'运费 KES':>11}   实重超过此值才按实重计")
+    print("  " + "-" * 74)
+    for l, w, h in boxes:
+        vol = l * w * h
+        vw = vol / a.volumetric_divisor
+        print(f"  {f'{l}x{w}x{h}':<16}{vol/1000:>7.1f}L{vw:>8.2f}kg{vw*rate:>11,.0f}"
+              f"        {vw:.2f} kg")
+    print()
+    print(f"  规则：长x宽x高(cm) / {a.volumetric_divisor} = 计费重(kg)，与实重取大者。")
+    print(f"  每 1kg 实重只配 {a.volumetric_divisor/1000:.0f} 升体积 —— 超过即按体积计费。")
 
 
 DEMO = [
@@ -358,6 +387,7 @@ def main():
 
     if args.table:
         sourcing_table(a)
+        box_table(a)
         return
 
     if args.floor:
