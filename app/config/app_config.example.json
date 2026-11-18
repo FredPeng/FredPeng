@@ -1,0 +1,23 @@
+{
+  "APP_NAME": "Sophie's Online Shopping",
+  "APP_LABEL": "Sophie's",
+  "APPLICATION_ID": "com.sophieshop.app",
+
+  "STORE_URL": "https://www.your-store.co.ke",
+  "COUNTRY": "KE",
+  "CURRENCY": "KES",
+  "SUPPORT_WHATSAPP": "2547XXXXXXXX",
+  "PRIVACY_POLICY_URL": "https://www.your-store.co.ke/privacy-policy/",
+
+  "META_APP_ID": "",
+  "META_CLIENT_TOKEN": "",
+
+  "TIKTOK_APP_ID": "",
+  "TIKTOK_ANDROID_ID": "",
+  "TIKTOK_IOS_ID": "",
+
+  "APPSFLYER_DEV_KEY": "",
+  "IOS_APP_STORE_ID": "",
+
+  "DEBUG_TRACKING": false
+}
