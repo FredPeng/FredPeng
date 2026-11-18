@@ -89,8 +89,12 @@ class PagedProducts extends ChangeNotifier {
 }
 
 class ProductCard extends StatelessWidget {
-  const ProductCard(this.product, {super.key});
+  const ProductCard(this.product, {super.key, this.hero = true});
   final Product product;
+
+  /// Only one card per product may carry the Hero (a product can appear in
+  /// both the "On sale" strip and the grid).
+  final bool hero;
 
   @override
   Widget build(BuildContext context) {
@@ -105,7 +109,10 @@ class ProductCard extends StatelessWidget {
           AspectRatio(
             aspectRatio: 1,
             child: Stack(fit: StackFit.expand, children: [
-              Hero(tag: 'p${p.id}', child: NetImage(p.thumbnail, radius: 12)),
+              if (hero)
+                Hero(tag: 'p${p.id}', child: NetImage(p.thumbnail, radius: 12))
+              else
+                NetImage(p.thumbnail, radius: 12),
               if (p.discountPercent > 0)
                 Positioned(left: 8, top: 8, child: Badge2('-${p.discountPercent}%')),
               if (!p.inStock)
@@ -236,7 +243,7 @@ class ProductStrip extends StatelessWidget {
           scrollDirection: Axis.horizontal,
           itemCount: products.length,
           separatorBuilder: (_, _) => const SizedBox(width: 12),
-          itemBuilder: (_, i) => SizedBox(width: 148, child: ProductCard(products[i])),
+          itemBuilder: (_, i) => SizedBox(width: 148, child: ProductCard(products[i], hero: false)),
         ),
       );
 }
