@@ -8,7 +8,7 @@ import 'shop_repository.dart';
 
 /// Offline catalogue used when no STORE_URL is configured, so the app can be
 /// tried, demoed and screenshotted without a live WooCommerce site.
-class DemoStore implements ShopRepository {
+class DemoStore extends ShopRepository {
   DemoStore() {
     _products = _seed();
   }
@@ -108,6 +108,7 @@ class DemoStore implements ShopRepository {
     await Future<void>.delayed(_latency);
     var list = _products.where((p) {
       if (query.categoryId != null && !p.categories.any((c) => c.id == query.categoryId)) return false;
+      if (query.categorySlug != null && !p.categories.any((c) => c.slug == query.categorySlug)) return false;
       if (query.onSale && !p.onSale) return false;
       if (query.include != null && !query.include!.contains(p.id)) return false;
       final s = query.search?.trim().toLowerCase();
@@ -145,9 +146,9 @@ class DemoStore implements ShopRepository {
   }
 
   @override
-  Future<List<Category>> categories() async {
+  Future<List<Category>> categories({int? parent}) async {
     await Future<void>.delayed(_latency);
-    return _cats;
+    return parent == null ? _cats : _cats.where((c) => c.parent == parent).toList();
   }
 
   Cart _cart() {

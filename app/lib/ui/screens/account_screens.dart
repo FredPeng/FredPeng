@@ -38,8 +38,11 @@ class OrderSuccessScreen extends StatelessWidget {
               Text('${order.total} · ${order.paymentMethod}', style: const TextStyle(fontWeight: FontWeight.w600)),
             ],
             const SizedBox(height: 12),
-            const Text(
-              'We will call you to confirm delivery. You can find this order under Me → My orders.',
+            Text(
+              order != null && order.paymentMethod.contains('M-Pesa')
+                  ? 'If you have not finished paying, complete the M-Pesa payment on your phone. '
+                      'You can find this order under Me → My orders.'
+                  : 'We will contact you to confirm delivery. You can find this order under Me → My orders.',
               textAlign: TextAlign.center,
               style: TextStyle(color: muted, height: 1.4),
             ),

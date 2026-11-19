@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show compute;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -8,6 +9,7 @@ import '../models/address.dart';
 import '../models/cart.dart';
 import '../models/money.dart';
 import '../models/product.dart';
+import 'disk_cache.dart';
 import 'shop_repository.dart';
 
 /// Client for the WooCommerce Store API (`/wp-json/wc/store/v1`).
@@ -16,25 +18,32 @@ import 'shop_repository.dart';
 /// use: no admin keys are needed in the app. The cart lives on the server and
 /// is identified by a `Cart-Token`, so a customer's cart is the same cart
 /// WooCommerce checks out (stock, coupons, shipping zones all apply).
-class StoreApi implements ShopRepository {
-  StoreApi(String storeUrl, this._prefs, {http.Client? client})
+class StoreApi extends ShopRepository {
+  StoreApi(String storeUrl, this._prefs, this._disk, {http.Client? client})
       : _base = '${storeUrl.replaceAll(RegExp(r'/+$'), '')}/wp-json/wc/store/v1',
         _http = client ?? http.Client() {
     _cartToken = _prefs.getString(_tokenKey);
   }
 
   static const _tokenKey = 'cart_token';
-  static const _diskPrefix = 'cache:';
   static const _timeout = Duration(seconds: 20);
   static const _memoryTtl = Duration(minutes: 5);
+
+  /// Product list cards only need these fields; leaving out descriptions,
+  /// attributes and variations makes each page about 35% smaller to download
+  /// and parse. The product page loads the full product itself.
+  static const _listFields =
+      'id,name,slug,permalink,type,prices,images,on_sale,is_in_stock,is_purchasable,has_options,average_rating,review_count';
 
   final String _base;
   final http.Client _http;
   final SharedPreferences _prefs;
+  final DiskCache _disk;
   String? _cartToken;
   String? _nonce;
 
-  final _memory = <String, ({DateTime at, Object data, int totalPages})>{};
+  final _memory = <String, ({DateTime at, Object value, int totalPages})>{};
+  final _inflight = <String, Future<({Object value, int totalPages})>>{};
 
   // ---------------------------------------------------------------- catalog
 
@@ -44,96 +53,137 @@ class StoreApi implements ShopRepository {
       'per_page': '$perPage',
       'orderby': q.sort.orderBy,
       'order': q.sort.order,
-      if (q.categoryId != null) 'category': '${q.categoryId}',
+      if (q.categoryId != null)
+        'category': '${q.categoryId}'
+      else if (q.categorySlug != null)
+        'category': q.categorySlug!,
       if (q.search != null && q.search!.isNotEmpty) 'search': q.search!,
       if (q.onSale) 'on_sale': 'true',
       if (q.featured) 'featured': 'true',
       if (q.include != null) 'include': q.include!.join(','),
       'stock_status': 'instock,onbackorder',
+      '_fields': _listFields,
     };
     return '/products?${Uri(queryParameters: params).query}';
   }
 
-  /// Returns a cached page instantly (memory, then disk) so screens can render
-  /// before the network answers. Only the first page is persisted to disk.
-  ProductPage? peekProducts(ProductQuery q, {int page = 1, int perPage = 20}) {
-    final path = _productsPath(q, page, perPage);
-    final mem = _memory[path];
-    if (mem != null) return ProductPage(_parseProducts(mem.data), mem.totalPages);
-    final disk = _prefs.getString('$_diskPrefix$path');
-    if (disk == null) return null;
-    try {
-      final m = jsonDecode(disk) as Map<String, dynamic>;
-      return ProductPage(_parseProducts(m['data']!), (m['pages'] as num).toInt());
-    } catch (_) {
-      return null;
-    }
+  String _categoriesPath(int? parent) =>
+      parent == null ? '/products/categories' : '/products/categories?parent=$parent';
+
+  @override
+  Future<ProductPage?> cachedProducts(ProductQuery query, {int perPage = 20}) async {
+    final r = await _peek(_productsPath(query, 1, perPage), _Kind.products);
+    return r == null ? null : ProductPage(r.value as List<Product>, r.totalPages);
   }
 
-  List<Category>? peekCategories() {
-    final disk = _prefs.getString('$_diskPrefix/products/categories');
-    if (disk == null) return null;
-    try {
-      return _parseCategories((jsonDecode(disk) as Map)['data']!);
-    } catch (_) {
-      return null;
-    }
+  @override
+  Future<List<Category>?> cachedCategories({int? parent}) async {
+    final r = await _peek(_categoriesPath(parent), _Kind.categories);
+    return r?.value as List<Category>?;
+  }
+
+  @override
+  Future<Product?> cachedProduct(int id) async {
+    final r = await _peek('/products/$id', _Kind.product);
+    return r?.value as Product?;
   }
 
   @override
   Future<ProductPage> products(ProductQuery query, {int page = 1, int perPage = 20}) async {
     final path = _productsPath(query, page, perPage);
-    final res = await _cachedGet(path, persist: page == 1 && query.search == null);
-    return ProductPage(_parseProducts(res.data), res.totalPages);
+    final hasSearch = query.search != null && query.search!.isNotEmpty;
+    final r = await _get(path, _Kind.products, persist: page == 1 && !hasSearch);
+    return ProductPage(r.value as List<Product>, r.totalPages);
   }
 
   @override
-  Future<Product> product(int id) async {
-    final res = await _cachedGet('/products/$id');
-    return Product.fromJson((res.data as Map).cast<String, dynamic>());
-  }
+  Future<Product> product(int id) async => (await _get('/products/$id', _Kind.product, persist: true)).value as Product;
 
   @override
   Future<Product?> productBySlug(String slug) async {
-    final res = await _cachedGet('/products?slug=${Uri.encodeQueryComponent(slug)}');
-    final list = _parseProducts(res.data);
+    final r = await _get('/products?slug=${Uri.encodeQueryComponent(slug)}', _Kind.products);
+    final list = r.value as List<Product>;
     return list.isEmpty ? null : list.first;
   }
 
   @override
-  Future<List<Category>> categories() async {
-    final res = await _cachedGet('/products/categories', persist: true);
-    return _parseCategories(res.data);
-  }
+  Future<List<Category>> categories({int? parent}) async =>
+      (await _get(_categoriesPath(parent), _Kind.categories, persist: true)).value as List<Category>;
 
-  List<Product> _parseProducts(Object data) => [
-        for (final p in data as List) Product.fromJson((p as Map).cast<String, dynamic>()),
-      ];
-
-  List<Category> _parseCategories(Object data) => [
-        for (final c in data as List) Category.fromJson((c as Map).cast<String, dynamic>()),
-      ]
-        ..removeWhere((c) => c.count == 0 || c.slug == 'uncategorized');
-
-  Future<({Object data, int totalPages})> _cachedGet(String path, {bool persist = false}) async {
+  /// Memory (fresh) -> network -> disk (offline fallback). Concurrent calls
+  /// for the same path share one request.
+  Future<({Object value, int totalPages})> _get(String path, _Kind kind, {bool persist = false}) {
     final mem = _memory[path];
     if (mem != null && DateTime.now().difference(mem.at) < _memoryTtl) {
-      return (data: mem.data, totalPages: mem.totalPages);
+      return Future.value((value: mem.value, totalPages: mem.totalPages));
     }
-    final res = await _send('GET', path);
-    final data = _decode(res);
-    final pages = int.tryParse(res.headers['x-wp-totalpages'] ?? '') ?? 1;
-    _memory[path] = (at: DateTime.now(), data: data, totalPages: pages);
-    if (persist) {
-      unawaited(_prefs.setString('$_diskPrefix$path', jsonEncode({'data': data, 'pages': pages})));
+    return _inflight[path] ??= () async {
+      try {
+        final res = await _send('GET', path, withCart: false);
+        final body = utf8.decode(res.bodyBytes);
+        final pages = int.tryParse(res.headers['x-wp-totalpages'] ?? '') ?? 1;
+        final value = await _parse(kind, body);
+        _memory[path] = (at: DateTime.now(), value: value, totalPages: pages);
+        if (persist) unawaited(_disk.write(path, '$pages\n$body'));
+        return (value: value, totalPages: pages);
+      } on ShopException {
+        final stale = await _peek(path, kind);
+        if (stale != null) return stale;
+        rethrow;
+      } finally {
+        _inflight.remove(path);
+      }
+    }();
+  }
+
+  Future<({Object value, int totalPages})?> _peek(String path, _Kind kind) async {
+    final mem = _memory[path];
+    if (mem != null) return (value: mem.value, totalPages: mem.totalPages);
+    final raw = await _disk.read(path);
+    if (raw == null) return null;
+    try {
+      final nl = raw.indexOf('\n');
+      final pages = int.parse(raw.substring(0, nl));
+      final value = await _parse(kind, raw.substring(nl + 1));
+      return (value: value, totalPages: pages);
+    } catch (_) {
+      return null;
     }
-    return (data: data, totalPages: pages);
+  }
+
+  /// Large JSON is decoded on a background isolate so scrolling never janks.
+  static Future<Object> _parse(_Kind kind, String body) {
+    if (body.length < 16 * 1024) return Future.value(_parseSync((kind, body)));
+    return compute(_parseSync, (kind, body));
+  }
+
+  static Object _parseSync((_Kind, String) input) {
+    final (kind, body) = input;
+    final Object json;
+    try {
+      json = jsonDecode(body) as Object;
+    } catch (_) {
+      throw ShopException('Unexpected response from the store. Please try again later.');
+    }
+    switch (kind) {
+      case _Kind.products:
+        return <Product>[for (final p in json as List) Product.fromJson((p as Map).cast<String, dynamic>())];
+      case _Kind.product:
+        return Product.fromJson((json as Map).cast<String, dynamic>());
+      case _Kind.categories:
+        return <Category>[
+          for (final c in json as List) Category.fromJson((c as Map).cast<String, dynamic>()),
+        ]..removeWhere((c) => c.count == 0 || c.slug == 'uncategorized');
+    }
   }
 
   // ------------------------------------------------------------------- cart
 
+  /// No saved cart token means the cart is empty: skip the request, so
+  /// browsing never creates a WooCommerce session on the server.
   @override
-  Future<Cart> cart() async => _cartFrom(await _send('GET', '/cart'));
+  Future<Cart> cart() async => _cartToken == null ? Cart.empty : _cartFrom(await _send('GET', '/cart'));
+
 
   @override
   Future<Cart> addToCart(int productId, int quantity, {Map<String, String> options = const {}}) async {
@@ -214,13 +264,19 @@ class StoreApi implements ShopRepository {
 
   // ---------------------------------------------------------------- network
 
-  Future<http.Response> _send(String method, String path, {Object? body, bool retry = true}) async {
+  Future<http.Response> _send(String method, String path, {Object? body, bool retry = true, bool withCart = true}) async {
+    // Cart changes need a Cart-Token and Nonce: fetch them once, up front.
+    if (method != 'GET' && withCart && retry && (_cartToken == null || _nonce == null)) {
+      await _send('GET', '/cart', retry: false);
+    }
     final uri = Uri.parse('$_base$path');
     final headers = {
       'Accept': 'application/json',
       if (body != null) 'Content-Type': 'application/json',
-      'Cart-Token': ?_cartToken,
-      'Nonce': ?_nonce,
+      // Catalogue requests carry no cart token, so they are identical for
+      // every shopper and can be served from the server / Cloudflare cache.
+      if (withCart) 'Cart-Token': ?_cartToken,
+      if (withCart) 'Nonce': ?_nonce,
     };
     http.Response res;
     try {
@@ -228,13 +284,17 @@ class StoreApi implements ShopRepository {
       if (body != null) req.body = jsonEncode(body);
       res = await http.Response.fromStream(await _http.send(req).timeout(_timeout));
     } on TimeoutException {
-      if (retry && method == 'GET') return _send(method, path, retry: false);
+      if (retry && method == 'GET') return _send(method, path, retry: false, withCart: withCart);
       throw ShopException('The connection timed out. Please check your internet and try again.');
     } catch (_) {
-      if (retry && method == 'GET') return _send(method, path, retry: false);
+      if (retry && method == 'GET') return _send(method, path, retry: false, withCart: withCart);
       throw ShopException('No internet connection. Please try again.');
     }
 
+    if (!withCart) {
+      if (res.statusCode >= 400) throw ShopException(_errorMessage(res), code: _errorCode(res));
+      return res;
+    }
     final token = res.headers['cart-token'];
     if (token != null && token.isNotEmpty && token != _cartToken) {
       _cartToken = token;
@@ -287,3 +347,5 @@ class StoreApi implements ShopRepository {
     return 'Something went wrong (${res.statusCode}).';
   }
 }
+
+enum _Kind { products, product, categories }

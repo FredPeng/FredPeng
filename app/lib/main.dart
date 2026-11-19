@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'config.dart';
 import 'data/demo_store.dart';
+import 'data/disk_cache.dart';
 import 'data/regions.dart';
 import 'data/shop_repository.dart';
 import 'data/store_api.dart';
@@ -21,7 +22,8 @@ Future<void> main() async {
 
   final prefs = await SharedPreferences.getInstance();
   final regions = await Regions.load();
-  final ShopRepository repo = AppConfig.isDemo ? DemoStore() : StoreApi(AppConfig.storeUrl, prefs);
+  final ShopRepository repo =
+      AppConfig.isDemo ? DemoStore() : StoreApi(AppConfig.storeUrl, prefs, await DiskCache.open());
 
   // Start the UI immediately; ad SDKs initialise in the background so they
   // never slow down app start.

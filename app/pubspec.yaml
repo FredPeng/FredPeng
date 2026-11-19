@@ -46,6 +46,7 @@ dependencies:
   firebase_analytics: ^13.1.0
   tiktok_events_sdk: ^1.5.1
   appsflyer_sdk: ^7.0.4
+  path_provider: ^2.1.6
 
 dev_dependencies:
   flutter_test:

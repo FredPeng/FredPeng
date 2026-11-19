@@ -17,13 +17,23 @@
 | 我的 | 订单记录、心愿单、保存的收货信息、WhatsApp 客服、个性化广告开关 |
 | 深度链接 | 网站商品链接 `https://你的域名/product/xxx/` 可以直接在 App 中打开；广告可用 `sophieshop://open/product/123` |
 
-### 速度与体验
-- Flutter AOT 原生编译，Android 单设备下载约 20 MB
-- 首页和分类数据缓存在本地：二次打开**秒开**，后台静默刷新
-- 图片按显示尺寸解码并缓存在磁盘，列表滚动流畅
-- 广告 SDK 在后台初始化，**不拖慢启动速度**；任何 SDK 出错都不会影响购物
-- 加购、改数量采用"先更新界面再同步服务器"，点击即时响应
-- 再次结账时自动填充上次的收货信息
+### 性能（已用 sophie.co.ke 实测）
+
+App 和网站共用同一台服务器，所以优化分两部分：既要让 App 快，也要不给网站增加负担。
+
+实测网站接口（未缓存时）：商品列表约 1.7 秒、商品详情约 1.3 秒、全部 736 个分类约 3.6 秒。数据量不是瓶颈（gzip 后只有 20 KB 左右），时间主要花在服务器的 PHP / WooCommerce 处理上。
+
+**App 端**
+- 列表只请求卡片需要的字段（`_fields`），数据量减少约 35%；详情页再加载完整信息
+- 分类只加载 18 个一级分类（1.4 秒，原来要加载全部 736 个，3.6 秒），点进去再加载子分类
+- 网站分类链接直接用 slug 查询商品，无需先下载全部分类
+- 所有列表、分类、详情都保存到手机缓存目录：再次打开**直接显示**，后台静默更新；离线时也能浏览上次的内容
+- 较大的 JSON 放到后台线程解析，滚动不卡顿
+- 浏览商品的请求不带购物车令牌，所有顾客的请求完全相同，所以服务器和 Cloudflare 都能缓存
+- 只浏览不加购的用户**不会在服务器上创建会话**（原来每次打开 App 都会请求一次购物车）
+- 同一个请求同时发起多次时只发送一次；图片按显示尺寸解码，使用网站已有的 450×450 webp 缩略图
+
+**服务器端（推荐安装，见下方"服务器端缓存"）**：商品和分类接口的响应时间可以从 1.3–1.8 秒降到缓存命中时的约 0.1–0.3 秒，网站本身也不会因为 App 流量变慢。
 
 ## 广告平台对接
 
@@ -55,13 +65,25 @@ cp config/app_config.example.json config/app_config.json   # 填入网站地址�
 
 `app_config.json` 已加入 `.gitignore`，不会提交到 Git。Gradle 打包时也会读取这个文件（App 名称、Meta ID、深度链接域名），所以只需要维护这一个文件。
 
-**不填 `STORE_URL` 时 App 以演示模式运行**，使用内置的示例商品，方便试用和截图。
+示例配置里已经填好了 `STORE_URL: https://sophie.co.ke`。**不填 `STORE_URL` 时 App 以演示模式运行**，使用内置的示例商品，方便试用和截图。
 
-### 网站端需要确认
-1. WooCommerce 6.x 以上（Store API `/wp-json/wc/store/v1` 默认开启）。可以先在浏览器打开 `https://你的域名/wp-json/wc/store/v1/products` 检查是否能看到商品 JSON。
-2. 如果用了安全插件或 Cloudflare，需要放行 `/wp-json/wc/store/` 路径。
-3. App Links（网站链接直接打开 App）：上架后把 Play Console → 应用完整性 里的 SHA-256 证书指纹写进网站的 `/.well-known/assetlinks.json`。
-4. 网站结账页把 Email 设成了选填。如果某个插件强制要求 Email，App 会直接显示网站返回的错误提示。
+### 服务器端缓存（推荐）
+
+`../wordpress/mu-plugins/sophie-app-cache.php` 是一个 WordPress "必用插件"（mu-plugin）：
+
+1. 把它上传到服务器的 `wp-content/mu-plugins/` 目录（没有这个目录就新建一个），不需要手动启用。sophie.co.ke 的目录名可能不同：插件路径是 `/content/plugins/`，那么就放到 `/content/mu-plugins/`。
+2. 验证：`curl -sI "https://sophie.co.ke/wp-json/wc/store/v1/products?per_page=1" | grep -i x-sophie-cache`，第一次显示 `MISS`，之后显示 `HIT`。
+
+它只缓存**只读**的商品列表、商品详情和分类接口（每条最多保存 10 分钟）。购物车、结账、搜索和已登录用户的请求一律不缓存，网页也完全不受影响。商品、库存、价格、分类有任何变动，缓存都会立即失效。有 Redis 等对象缓存时使用对象缓存，没有就使用 `wp-content/cache/sophie-app/` 下的文件。
+
+**可选：Cloudflare 边缘缓存**（网站已经在用 Cloudflare）。在 Cloudflare → Caching → Cache Rules 新建规则：URI Path 以 `/wp-json/wc/store/v1/products` 开头 → Eligible for cache，Edge TTL 选 "Use cache-control header if present, bypass cache if not"。插件会为可缓存的响应设置 5 分钟的 `s-maxage`，肯尼亚用户直接从 Cloudflare 内罗毕节点拿到数据，请求不再到达服务器。
+
+### 网站端已确认 / 需要注意
+1. ✅ Store API 可以正常访问，商品、分类、详情、加入/移出购物车都已用 `test_live/` 中的测试实测通过（测试**不会**下单）。
+2. ✅ 当前唯一启用的支付方式是 M-Pesa（HS WooCommerce M-Pesa 插件），使用账单电话号码，没有额外字段。App 下单后会打开插件返回的支付页面。**请用一个小额商品真实下单一次**，确认 STK 推送或付款页面正常。
+3. 如果用了安全插件（Wordfence 等）限制 REST API，需要放行 `/wp-json/wc/store/` 路径。
+4. App Links（网站链接直接打开 App）：上架后把 Play Console → 应用完整性 里的 SHA-256 证书指纹写进网站的 `/.well-known/assetlinks.json`。
+5. 网站的条款里已经写了"website and mobile application"，正好覆盖 App。
 
 ## 开发与打包
 
@@ -70,7 +92,8 @@ cp config/app_config.example.json config/app_config.json   # 填入网站地址�
 ```bash
 flutter pub get
 flutter run --dart-define-from-file=config/app_config.json          # 真机调试
-flutter test                                                         # 单元测试 + 完整下单流程测试
+flutter test                                                         # 单元测试 + 完整下单流程测试（演示数据）
+flutter test test_live                                               # 对 sophie.co.ke 的实测（不下单）
 flutter build appbundle --dart-define-from-file=config/app_config.json   # 上架用 AAB
 ```
 

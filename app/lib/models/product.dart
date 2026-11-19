@@ -272,6 +272,7 @@ enum ProductSort {
 class ProductQuery {
   const ProductQuery({
     this.categoryId,
+    this.categorySlug,
     this.search,
     this.onSale = false,
     this.featured = false,
@@ -280,6 +281,9 @@ class ProductQuery {
   });
 
   final int? categoryId;
+
+  /// Website category slug (from /product-category/SLUG/ links).
+  final String? categorySlug;
   final String? search;
   final bool onSale;
   final bool featured;

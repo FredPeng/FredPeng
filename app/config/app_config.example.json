@@ -3,11 +3,11 @@
   "APP_LABEL": "Sophie's",
   "APPLICATION_ID": "com.sophieshop.app",
 
-  "STORE_URL": "https://www.your-store.co.ke",
+  "STORE_URL": "https://sophie.co.ke",
   "COUNTRY": "KE",
   "CURRENCY": "KES",
   "SUPPORT_WHATSAPP": "2547XXXXXXXX",
-  "PRIVACY_POLICY_URL": "https://www.your-store.co.ke/privacy-policy/",
+  "PRIVACY_POLICY_URL": "https://sophie.co.ke/privacy-policy/",
 
   "META_APP_ID": "",
   "META_CLIENT_TOKEN": "",

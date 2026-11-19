@@ -31,11 +31,26 @@ class _ProductScreenState extends State<ProductScreen> {
   final Map<String, String> _selected = {};
   bool _adding = false;
 
+  /// List data has no description/options; true once the full product is in.
+  bool _full = false;
+
   @override
   void initState() {
     super.initState();
     _p = widget.initial;
     _initSelection();
+    final id = int.tryParse(widget.ref);
+    if (id != null) {
+      repoOf(context).cachedProduct(id).then((p) {
+        if (p == null || !mounted || _full) return;
+        final first = _p == null;
+        setState(() {
+          _p = p;
+          _full = true;
+        });
+        if (first) _initSelection();
+      });
+    }
     _load();
   }
 
@@ -73,6 +88,7 @@ class _ProductScreenState extends State<ProductScreen> {
       final first = _p == null;
       setState(() {
         _p = p;
+        _full = true;
         _error = null;
       });
       if (first) _initSelection();
@@ -137,6 +153,8 @@ class _ProductScreenState extends State<ProductScreen> {
     final width = MediaQuery.sizeOf(context).width;
     final images = p.images.isEmpty ? [null] : p.images.map((i) => i.src).toList();
     final canBuy = p.inStock && p.purchasable;
+    // A variable product from a list has no options yet: wait for them.
+    final ready = _full || !p.hasOptions;
 
     return Scaffold(
       body: CustomScrollView(slivers: [
@@ -286,8 +304,8 @@ class _ProductScreenState extends State<ProductScreen> {
           child: Row(children: [
             Expanded(
               child: OutlinedButton(
-                onPressed: canBuy && !_adding ? () => _addToCart() : null,
-                child: _adding
+                onPressed: canBuy && ready && !_adding ? () => _addToCart() : null,
+                child: _adding || !ready
                     ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
                     : const Text('Add to cart'),
               ),
@@ -295,7 +313,7 @@ class _ProductScreenState extends State<ProductScreen> {
             const SizedBox(width: 12),
             Expanded(
               child: FilledButton(
-                onPressed: canBuy && !_adding ? () => _addToCart(buyNow: true) : null,
+                onPressed: canBuy && ready && !_adding ? () => _addToCart(buyNow: true) : null,
                 child: const Text('Buy now'),
               ),
             ),
@@ -322,7 +340,7 @@ class _Perks extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 14),
       child: Row(children: [
         perk(Icons.local_shipping_outlined, 'Fast delivery'),
-        perk(Icons.payments_outlined, 'Pay on delivery'),
+        perk(Icons.phone_android, 'Pay with M-Pesa'),
         perk(Icons.verified_outlined, 'Quality checked'),
       ]),
     );

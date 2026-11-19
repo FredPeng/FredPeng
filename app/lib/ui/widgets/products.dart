@@ -3,7 +3,6 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../../data/shop_repository.dart';
-import '../../data/store_api.dart';
 import '../../models/product.dart';
 import '../../services.dart';
 import '../../state/local_models.dart';
@@ -13,15 +12,18 @@ import 'common.dart';
 /// Paginated product list with instant cached first page and infinite scroll.
 class PagedProducts extends ChangeNotifier {
   PagedProducts(this._repo, this.query, {this.perPage = 20}) {
-    final repo = _repo;
-    if (repo is StoreApi) {
-      final cached = repo.peekProducts(query, perPage: perPage);
-      if (cached != null) {
-        items.addAll(cached.items);
-        _totalPages = cached.totalPages;
-      }
-    }
+    _showCached(query);
     refresh();
+  }
+
+  /// Stale-while-revalidate: show the last saved first page instantly while
+  /// the fresh one loads.
+  Future<void> _showCached(ProductQuery q) async {
+    final cached = await _repo.cachedProducts(q, perPage: perPage);
+    if (cached == null || _disposed || !identical(q, query) || _page > 0 || items.isNotEmpty) return;
+    items.addAll(cached.items);
+    _totalPages = cached.totalPages;
+    _notify();
   }
 
   final ShopRepository _repo;
@@ -47,6 +49,7 @@ class PagedProducts extends ChangeNotifier {
   void setQuery(ProductQuery q) {
     query = q;
     items.clear();
+    _showCached(q);
     refresh();
   }
 

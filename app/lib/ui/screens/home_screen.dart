@@ -2,7 +2,6 @@ import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../config.dart';
-import '../../data/store_api.dart';
 import '../../models/product.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -23,15 +22,16 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    final repo = repoOf(context);
-    if (repo is StoreApi) _categories = repo.peekCategories() ?? const [];
+    repoOf(context).cachedCategories(parent: 0).then((c) {
+      if (c != null && mounted && _categories.isEmpty) setState(() => _categories = c);
+    });
     _loadCategories();
   }
 
   Future<void> _loadCategories() async {
     try {
-      final c = await repoOf(context).categories();
-      if (mounted) setState(() => _categories = c.where((c) => c.parent == 0).toList());
+      final c = await repoOf(context).categories(parent: 0);
+      if (mounted) setState(() => _categories = c);
     } catch (_) {}
   }
 
