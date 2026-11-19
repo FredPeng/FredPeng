@@ -23,3 +23,6 @@
 @media (prefers-reduced-motion: reduce) {
 	.sophie-for-you__skeleton span, .sophie-for-you__skeleton i { animation: none; }
 }
+.sophie-for-you__more { text-align: center; margin: 24px 0; }
+.sophie-for-you__more[hidden] { display: none; }
+.sophie-for-you--all .products + .products { margin-top: 0; }

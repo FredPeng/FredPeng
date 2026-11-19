@@ -99,4 +99,26 @@ check( array_keys( $a ) === array_keys( $r ), 'stable for the same visitor and d
 $r6 = Sophie_Rec_Model::rank( $base + array( 'history' => array( 12345 ) ) );
 check( array_key_first( $r6 ) === 99, 'unknown product in history falls back to trending' );
 
+// --- long lists ("See all" page) -----------------------------------------------
+$big_items = array( 1 => array( 'leaf' => 1, 'top' => 1 ) );
+$big_sims  = array( 1 => array() );
+for ( $i = 100; $i < 160; $i++ ) { // 60 candidates: 40 in the favourite category 1, 20 elsewhere
+	$cat                 = $i < 140 ? 1 : 2 + ( $i % 5 );
+	$big_items[ $i ]     = array( 'leaf' => $cat, 'top' => $cat );
+	$big_sims[1][ $i ]   = 1.0 - ( $i - 100 ) / 100; // strictly decreasing weight
+}
+$long = Sophie_Rec_Model::rank( array( 'history' => array( 1 ), 'sims' => $big_sims, 'items' => $big_items, 'limit' => 48, 'seed' => 'x' ) );
+check( count( $long ) === 48, 'long list returns 48' );
+$fav = array_keys( array_filter( array_keys( $long ), fn( $id ) => $big_items[ $id ]['leaf'] === 1 ) );
+$fav_in_first_half = count( array_filter( array_slice( array_keys( $long ), 0, 24 ), fn( $id ) => $big_items[ $id ]['leaf'] === 1 ) );
+check( $fav_in_first_half >= 10, "favourite category is not pushed to the end ($fav_in_first_half of first 24)" );
+$keys = array_slice( array_keys( $long ), 0, 24 ); // while other categories are still available
+$max_run = 0; $run = 0; $prev = null;
+foreach ( $keys as $id ) { $c = $big_items[ $id ]['leaf']; $run = ( $c === $prev ) ? $run + 1 : 1; $prev = $c; $max_run = max( $max_run, $run ); }
+check( $max_run <= 3, "no long runs of one category (longest run $max_run)" );
+$scores = array_column( array_values( $long ), 'score' );
+$inversions = 0;
+for ( $i = 1; $i < count( $scores ); $i++ ) { if ( $scores[ $i ] > $scores[ $i - 1 ] + 1e-9 ) { $inversions++; } }
+check( $scores[0] >= max( $scores ) - 0.05, 'list starts with the highest weight' );
+
 exit( $fail );

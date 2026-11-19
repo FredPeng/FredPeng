@@ -5,13 +5,24 @@ WooCommerce 个性化推荐插件：在首页显示 **"Products For You"**，每
 ## 安装
 
 1. 把 `sophie-recommendations.zip` 上传到 **插件 → 安装插件 → 上传插件**，然后启用。
-2. 启用约 30 秒后会自动完成第一次学习（也可以在 **WooCommerce → Recommendations** 点击 **Rebuild now**）。
-3. 在首页编辑器中添加一个 **Shortcode（短代码）** 元素：
+   - 启用约 30 秒后会自动完成第一次学习（也可以在 **WooCommerce → Recommendations** 点击 **Rebuild now**）。
+   - 同时会自动创建 **"See all" 页面** `/for-you/`（标题 "Products For You"，内容为 `[sophie_for_you_all]`）。
+2. 用 Elementor 编辑首页，在想放推荐的位置（例如 "50% Off Zone" 的位置）加一个 **Shortcode** 元素：
    ```
    [sophie_for_you]
    ```
-   也可以指定参数：`[sophie_for_you title="Products For You" limit="8" columns="4"]`
-   Elessi 主题使用的 WPBakery / Elementor 都有 Shortcode 元素。
+   默认显示 **4 个商品**，标题是 **Products For You [See all]**，样式与 "50% Off Zone [See all]" 的标题相同，点击后进入 `/for-you/`。
+
+   可选参数：`[sophie_for_you title="Products For You" limit="4" columns="4" see_all="[See all]"]`
+
+   **想让标题和其他区块完全一致的话**：在 Elementor 里复制 "50% Off Zone [See all]" 的标题组件，把文字改成 "Products For You"，链接改成 `/for-you/`；Shortcode 元素填 `[sophie_for_you title=""]`（不输出插件自带的标题）。
+
+### "See all" 页面
+- 显示这位访客的**全部推荐**（最多 96 个），按推荐权重从高到低排列。前 4 个与首页显示的完全相同。
+- 先加载 24 个，滚动到底部附近时自动加载下一批（也有 "Load more" 按钮）。
+- 排序按权重，同时避免同一分类连在一起：同一分类不会连续超过 2 个，但访客最喜欢的分类仍然排在前面，而不是被挤到最后。
+- 每位访客的页面内容都不同，所以设置了 `noindex`，不会被搜索引擎收录。
+- 页面可以在 WordPress 中正常编辑（例如修改标题、加 banner）；只要页面中包含 `[sophie_for_you_all]` 即可。也可以用 `[sophie_for_you_all columns="4" per_page="24"]` 调整列数和每批数量。
 
 ## 算法
 
@@ -28,7 +39,7 @@ WooCommerce 个性化推荐插件：在首页显示 **"Products For You"**，每
 1. 浏览器记住访客最近看过和加入购物车的 20 件商品，以及买过的商品（只存在访客自己的浏览器里）。
 2. 越近看过的商品权重越高，每件商品的"相似商品"分数会先归一化，避免某个商品的强关联盖过最新的兴趣。
 3. 再结合访客常看分类中的热门商品，以及全站趋势。
-4. **多样性重排**：同一分类的商品越多，后续同类商品得分越低，避免 8 件几乎一样的商品。
+4. **多样性重排**：同一分类的商品不会扎堆出现（只看最近 4 个位置），首页的 4 个商品各不相同；在长列表中仍然按权重排序。
 5. 每天有少量变化，同一天内保持稳定。
 6. 已经看过、已经买过、缺货、隐藏的商品不会出现；售罄的商品会立即消失，不用等到晚上重新学习。
 7. 新访客（没有任何记录）：显示多个分类的当前热门商品。
@@ -51,7 +62,7 @@ WooCommerce 个性化推荐插件：在首页显示 **"Products For You"**，每
 - 设置：标题、商品数量、列数、是否学习浏览数据、是否改进 Related products、排除的分类。
 
 ## 给 App 使用的接口
-- `GET /wp-json/sophie-rec/v1/for-you?h=12,34&p=56&n=8` → 推荐商品 ID 列表
+- `GET /wp-json/sophie-rec/v1/for-you?h=12,34&p=56&n=24&o=0` → 推荐商品 ID 列表（`o` 为偏移量，`total` 为总数）
 - `GET /wp-json/sophie-rec/v1/similar/123?n=8` → 相似商品
 
 ## 测试

@@ -211,26 +211,32 @@ final class Sophie_Rec_Model {
 		}
 		arsort( $scores );
 
-		// 5. Diversity re-rank: each extra item from the same category is
-		//    penalised, so the section shows a varied mix.
-		$picked    = array();
-		$cat_count = array();
-		$pool      = array_slice( $scores, 0, $limit * 6, true );
+		// 5. Diversity re-rank, local: a product is penalised for each product
+		//    of the same category among the last few picked. Every short run
+		//    (e.g. the 4 on the home page, each row on the "See all" page) is
+		//    varied, while the long list still follows the recommendation
+		//    weight (a favourite category is spread out, not pushed to the end).
+		$window = 4;
+		$picked = array();
+		$recent = array();
+		$pool   = array_slice( $scores, 0, $limit * 6, true );
 		while ( count( $picked ) < $limit && $pool ) {
 			$best    = null;
 			$best_sc = -1;
+			$counts  = array_count_values( $recent );
 			foreach ( $pool as $cid => $s ) {
 				$cat = $items[ $cid ]['leaf'] ?? 0;
-				$adj = $s * pow( 0.6, $cat ? ( $cat_count[ $cat ] ?? 0 ) : 0 );
+				$adj = $s * pow( 0.6, $cat ? ( $counts[ $cat ] ?? 0 ) : 0 );
 				if ( $adj > $best_sc ) {
 					$best_sc = $adj;
 					$best    = $cid;
 				}
 			}
-			$cat = $items[ $best ]['leaf'] ?? 0;
-			if ( $cat ) {
-				$cat_count[ $cat ] = ( $cat_count[ $cat ] ?? 0 ) + 1;
+			$recent[] = $items[ $best ]['leaf'] ?? 0;
+			if ( count( $recent ) > $window - 1 ) {
+				array_shift( $recent );
 			}
+			$recent = array_values( array_filter( $recent ) );
 			$picked[ $best ] = array(
 				'score'  => round( $pool[ $best ], 5 ),
 				'reason' => $reason[ $best ],

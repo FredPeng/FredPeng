@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Sophie Recommendations – Products For You
  * Description:       Personalised "Products For You" recommendations for WooCommerce: learns from what customers buy together and browse together, ranks per visitor in the browser-cache-friendly way, and works behind page caches and Cloudflare. Shortcode: [sophie_for_you]
- * Version:           1.0.0
+ * Version:           1.1.0
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            Fred Peng
@@ -14,7 +14,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'SOPHIE_REC_VERSION', '1.0.0' );
+define( 'SOPHIE_REC_VERSION', '1.1.0' );
 define( 'SOPHIE_REC_FILE', __FILE__ );
 define( 'SOPHIE_REC_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SOPHIE_REC_URL', plugin_dir_url( __FILE__ ) );
@@ -33,7 +33,7 @@ function sophie_rec_settings(): array {
 		(array) get_option( 'sophie_rec_settings', array() ),
 		array(
 			'title'           => 'Products For You',
-			'limit'           => 8,
+			'limit'           => 4, // home page; the "See all" page shows up to 96.
 			'columns'         => 4,
 			'tracking'        => 1, // learn "viewed together" from anonymous browsing.
 			'related'         => 1, // also improve "Related products" on product pages.
@@ -47,6 +47,7 @@ register_activation_hook(
 	function () {
 		Sophie_Rec_Store::install();
 		Sophie_Rec_Builder::schedule();
+		Sophie_Rec_Admin::ensure_page();
 		// First model build shortly after activation, in the background.
 		wp_schedule_single_event( time() + 30, 'sophie_rec_build' );
 	}

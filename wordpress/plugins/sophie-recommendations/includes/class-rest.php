@@ -27,7 +27,8 @@ final class Sophie_Rec_Rest {
 				'args'                => array(
 					'h' => array( 'type' => 'string', 'default' => '' ),
 					'p' => array( 'type' => 'string', 'default' => '' ),
-					'n' => array( 'type' => 'integer', 'default' => 8, 'minimum' => 1, 'maximum' => 24 ),
+					'n' => array( 'type' => 'integer', 'default' => 8, 'minimum' => 1, 'maximum' => 48 ),
+					'o' => array( 'type' => 'integer', 'default' => 0, 'minimum' => 0, 'maximum' => 96 ),
 					's' => array( 'type' => 'string', 'default' => '' ),
 				),
 			)
@@ -66,12 +67,10 @@ final class Sophie_Rec_Rest {
 	}
 
 	public static function for_you( WP_REST_Request $req ): WP_REST_Response {
-		$recs = Sophie_Rec_Recommender::for_visitor(
-			self::ids( (string) $req['h'] ),
-			self::ids( (string) $req['p'] ),
-			(int) $req['n'],
-			substr( sanitize_key( (string) $req['s'] ), 0, 20 ) . gmdate( 'Ymd' )
-		);
+		$h    = self::ids( (string) $req['h'] );
+		$p    = self::ids( (string) $req['p'] );
+		$seed = substr( sanitize_key( (string) $req['s'] ), 0, 20 ) . gmdate( 'Ymd' );
+		$recs = Sophie_Rec_Recommender::for_visitor( $h, $p, (int) $req['n'], $seed, (int) $req['o'] );
 		$out = array();
 		foreach ( $recs as $id => $info ) {
 			$out[] = array(
@@ -82,6 +81,7 @@ final class Sophie_Rec_Rest {
 		return self::cacheable(
 			array(
 				'products' => $out,
+				'total'    => Sophie_Rec_Recommender::count_for_visitor( $h, $p, $seed ),
 				'version'  => Sophie_Rec_Store::model_version(),
 			)
 		);

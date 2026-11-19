@@ -9,19 +9,36 @@ defined( 'ABSPATH' ) || exit;
 
 final class Sophie_Rec_Recommender {
 
+	/** Longest list a visitor can get (the "See all" page). */
+	const MAX = 96;
+
 	/**
 	 * @param int[]  $history   recently viewed / carted product ids, most recent first.
 	 * @param int[]  $purchased bought product ids.
+	 * One ranked list per visitor (up to MAX products, best first); the home
+	 * page shows the first few, the "See all" page pages through the rest.
+	 *
 	 * @param int    $limit     how many to return.
 	 * @param string $seed      varies results slightly per visitor per day.
+	 * @param int    $offset    skip this many (paging).
 	 * @return array [id => ['score' => float, 'reason' => string]]
 	 */
-	public static function for_visitor( array $history, array $purchased, int $limit, string $seed = '' ): array {
+	public static function for_visitor( array $history, array $purchased, int $limit, string $seed = '', int $offset = 0 ): array {
+		$full = self::full_list( $history, $purchased, $seed );
+		return array_slice( $full, max( 0, $offset ), max( 1, min( self::MAX, $limit ) ), true );
+	}
+
+	/** Total number of recommendations available for this visitor. */
+	public static function count_for_visitor( array $history, array $purchased, string $seed = '' ): int {
+		return count( self::full_list( $history, $purchased, $seed ) );
+	}
+
+	private static function full_list( array $history, array $purchased, string $seed ): array {
 		$history   = array_slice( array_values( array_unique( array_filter( array_map( 'absint', $history ) ) ) ), 0, 20 );
 		$purchased = array_slice( array_values( array_unique( array_filter( array_map( 'absint', $purchased ) ) ) ), 0, 20 );
-		$limit     = max( 1, min( 24, $limit ) );
+		$limit     = self::MAX;
 
-		$cache_key = 'fy_' . md5( implode( ',', $history ) . '|' . implode( ',', $purchased ) . "|$limit|$seed|" . Sophie_Rec_Store::model_version() );
+		$cache_key = 'fy2_' . md5( implode( ',', $history ) . '|' . implode( ',', $purchased ) . "|$seed|" . Sophie_Rec_Store::model_version() );
 		$cached    = wp_cache_get( $cache_key, 'sophie_rec' );
 		if ( is_array( $cached ) ) {
 			return $cached;
@@ -29,7 +46,7 @@ final class Sophie_Rec_Recommender {
 
 		$signals  = array_merge( $history, $purchased );
 		$sims     = Sophie_Rec_Store::sims_for( $signals );
-		$trending = Sophie_Rec_Store::trending( 60 );
+		$trending = Sophie_Rec_Store::trending( 150 );
 		$sig_info = Sophie_Rec_Store::items_for( $signals );
 
 		// Popular products from the categories this visitor looks at.
@@ -49,7 +66,7 @@ final class Sophie_Rec_Recommender {
 		arsort( $aff );
 		foreach ( array_slice( array_keys( $aff ), 0, 5 ) as $key ) {
 			$cat               = (int) substr( $key, 1 );
-			$cat_trend[ $cat ] = ( $cat_trend[ $cat ] ?? array() ) + Sophie_Rec_Store::category_trending( $cat, 't' === $key[0] );
+			$cat_trend[ $cat ] = ( $cat_trend[ $cat ] ?? array() ) + Sophie_Rec_Store::category_trending( $cat, 't' === $key[0], 60 );
 		}
 
 		// Candidate pool: only products that are currently in stock & visible.
@@ -77,12 +94,13 @@ final class Sophie_Rec_Recommender {
 				'items'     => $available + $sig_info,
 				'cat_trend' => $cat_trend,
 				'trending'  => array_intersect_key( $trending, $available ),
-				'limit'     => $limit + 4, // spare in case a product changed since the last build.
+				'limit'     => $limit + 8, // spare in case a product changed since the last build.
 				'seed'      => $seed,
 			)
 		);
 
 		// Final live check (stock / visibility can change between builds).
+		_prime_post_caches( array_keys( $ranked ), false, true );
 		$out = array();
 		foreach ( $ranked as $id => $info ) {
 			$product = wc_get_product( $id );

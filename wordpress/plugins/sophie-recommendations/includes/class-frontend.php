@@ -17,6 +17,8 @@ final class Sophie_Rec_Frontend {
 
 	public static function init(): void {
 		add_shortcode( 'sophie_for_you', array( __CLASS__, 'shortcode' ) );
+		add_shortcode( 'sophie_for_you_all', array( __CLASS__, 'shortcode_all' ) );
+		add_filter( 'wp_robots', array( __CLASS__, 'robots' ) );
 		add_action( 'wp_enqueue_scripts', array( __CLASS__, 'enqueue' ) );
 		add_action( 'wp_footer', array( __CLASS__, 'footer_data' ), 5 );
 		add_action( 'wp_ajax_sophie_rec_for_you', array( __CLASS__, 'ajax_for_you' ) );
@@ -69,8 +71,18 @@ final class Sophie_Rec_Frontend {
 		}
 	}
 
+	/** URL of the "See all" page (created automatically, see Sophie_Rec_Admin). */
+	public static function all_url(): string {
+		$id = (int) get_option( 'sophie_rec_page_id' );
+		return ( $id && 'publish' === get_post_status( $id ) ) ? (string) get_permalink( $id ) : '';
+	}
+
 	/**
-	 * [sophie_for_you title="Products For You" limit="8" columns="4"]
+	 * Home page section:
+	 * [sophie_for_you title="Products For You" limit="4" columns="4" see_all="[See all]"]
+	 *
+	 * title=""   hides the heading (e.g. when you use your own Elementor heading).
+	 * see_all="" hides the link.
 	 */
 	public static function shortcode( $atts ): string {
 		$s    = sophie_rec_settings();
@@ -79,31 +91,77 @@ final class Sophie_Rec_Frontend {
 				'title'   => $s['title'],
 				'limit'   => $s['limit'],
 				'columns' => $s['columns'],
+				'see_all' => '[See all]',
+				'link'    => '',
 			),
 			$atts,
 			'sophie_for_you'
 		);
-		wp_enqueue_style( 'sophie-rec' );
 		$limit   = max( 1, min( 24, (int) $atts['limit'] ) );
 		$columns = max( 1, min( 6, (int) $atts['columns'] ) );
+		$link    = $atts['link'] ? esc_url( $atts['link'] ) : self::all_url();
+		$heading = '';
+		if ( '' !== trim( $atts['title'] ) ) {
+			// Same markup as the theme's Elementor section headings ("50% Off Zone [See all]").
+			$inner = '<b>' . esc_html( $atts['title'] ) . ' </b>';
+			if ( $link && '' !== trim( $atts['see_all'] ) ) {
+				$inner = '<a href="' . esc_url( $link ) . '">' . $inner . ' <u><i>' . esc_html( $atts['see_all'] ) . '</i></u></a>';
+			}
+			$heading = '<h2 class="sophie-for-you__title elementor-heading-title elementor-size-default">' . $inner . '</h2>';
+		}
+		return self::section( 'home', $limit, $columns, $heading );
+	}
+
+	/**
+	 * "See all" page: every recommendation for this visitor, best first,
+	 * loaded 24 at a time while scrolling.
+	 * [sophie_for_you_all columns="4" per_page="24"]
+	 */
+	public static function shortcode_all( $atts ): string {
+		$atts = shortcode_atts(
+			array(
+				'columns'  => sophie_rec_settings()['columns'],
+				'per_page' => 24,
+			),
+			$atts,
+			'sophie_for_you_all'
+		);
+		$columns  = max( 1, min( 6, (int) $atts['columns'] ) );
+		$per_page = max( 4, min( 48, (int) $atts['per_page'] ) );
+		return self::section( 'all', $per_page, $columns, '' );
+	}
+
+	private static function section( string $mode, int $limit, int $columns, string $heading ): string {
+		wp_enqueue_style( 'sophie-rec' );
 		ob_start();
 		?>
-		<section class="sophie-for-you woocommerce" data-limit="<?php echo esc_attr( $limit ); ?>" data-columns="<?php echo esc_attr( $columns ); ?>" style="--sfy-cols: <?php echo esc_attr( $columns ); ?>">
-			<?php if ( '' !== trim( $atts['title'] ) ) : ?>
-				<h2 class="sophie-for-you__title"><?php echo esc_html( $atts['title'] ); ?></h2>
-			<?php endif; ?>
+		<section class="sophie-for-you sophie-for-you--<?php echo esc_attr( $mode ); ?> woocommerce" data-mode="<?php echo esc_attr( $mode ); ?>" data-limit="<?php echo esc_attr( $limit ); ?>" data-columns="<?php echo esc_attr( $columns ); ?>" style="--sfy-cols: <?php echo esc_attr( $columns ); ?>">
+			<?php echo $heading; // phpcs:ignore WordPress.Security.EscapeOutput -- escaped above. ?>
 			<div class="sophie-for-you__grid" aria-busy="true">
-				<?php for ( $i = 0; $i < $limit; $i++ ) : ?>
+				<?php for ( $i = 0, $n = 'all' === $mode ? min( $limit, 8 ) : $limit; $i < $n; $i++ ) : ?>
 					<div class="sophie-for-you__skeleton"><span></span><i></i><i></i></div>
 				<?php endfor; ?>
 			</div>
+			<?php if ( 'all' === $mode ) : ?>
+				<div class="sophie-for-you__more" hidden><button type="button" class="button"><?php esc_html_e( 'Load more', 'sophie-rec' ); ?></button></div>
+			<?php endif; ?>
 		</section>
 		<?php
 		return (string) ob_get_clean();
 	}
 
+	/** The "See all" page is different for every visitor: keep it out of search results. */
+	public static function robots( array $robots ): array {
+		$id = (int) get_option( 'sophie_rec_page_id' );
+		if ( $id && is_page( $id ) ) {
+			$robots['noindex'] = true;
+			$robots['follow']  = true;
+		}
+		return $robots;
+	}
+
 	/**
-	 * admin-ajax endpoint: GET ?action=sophie_rec_for_you&h=1,2&p=3&n=8&c=4&s=SEED
+	 * admin-ajax endpoint: GET ?action=sophie_rec_for_you&h=1,2&p=3&n=8&o=0&c=4&s=SEED
 	 * Rendered with the theme's own product card template (content-product.php),
 	 * so cards look exactly like the rest of the shop.
 	 */
@@ -111,13 +169,16 @@ final class Sophie_Rec_Frontend {
 		// phpcs:disable WordPress.Security.NonceVerification -- public, read-only, cacheable.
 		$history   = self::ids( $_GET['h'] ?? '' );
 		$purchased = self::ids( $_GET['p'] ?? '' );
-		$limit     = max( 1, min( 24, absint( $_GET['n'] ?? 8 ) ) );
+		$limit     = max( 1, min( 48, absint( $_GET['n'] ?? 8 ) ) );
+		$offset    = min( Sophie_Rec_Recommender::MAX, absint( $_GET['o'] ?? 0 ) );
 		$columns   = max( 1, min( 6, absint( $_GET['c'] ?? 4 ) ) );
 		$seed      = substr( sanitize_key( wp_unslash( $_GET['s'] ?? '' ) ), 0, 20 );
 		// phpcs:enable
 
-		$ids  = array_keys( Sophie_Rec_Recommender::for_visitor( $history, $purchased, $limit, $seed . gmdate( 'Ymd' ) ) );
-		$html = self::render_cards( $ids, $columns );
+		$seed  = $seed . gmdate( 'Ymd' );
+		$ids   = array_keys( Sophie_Rec_Recommender::for_visitor( $history, $purchased, $limit, $seed, $offset ) );
+		$total = Sophie_Rec_Recommender::count_for_visitor( $history, $purchased, $seed );
+		$html  = self::render_cards( $ids, $columns );
 
 		// admin-ajax sends no-cache headers; this response only depends on the
 		// URL, so let browsers and Cloudflare keep it for a while.
@@ -127,6 +188,7 @@ final class Sophie_Rec_Frontend {
 		header( 'Cache-Control: public, max-age=600, s-maxage=3600' );
 		header( 'Content-Type: text/html; charset=' . get_option( 'blog_charset' ) );
 		header( 'X-Robots-Tag: noindex' );
+		header( 'X-Sophie-More: ' . ( $offset + count( $ids ) < $total ? '1' : '0' ) );
 		echo $html; // phpcs:ignore WordPress.Security.EscapeOutput -- WooCommerce templates escape their output.
 		exit; // not wp_die(): it would send no-cache headers again.
 	}

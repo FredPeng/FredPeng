@@ -9,7 +9,31 @@ defined( 'ABSPATH' ) || exit;
 
 final class Sophie_Rec_Admin {
 
+	/**
+	 * Creates the "See all" page ([sophie_for_you_all]) once. If it is deleted
+	 * or changed, the setting below points to whichever page you choose.
+	 */
+	public static function ensure_page(): void {
+		$id = (int) get_option( 'sophie_rec_page_id' );
+		if ( $id && get_post( $id ) ) {
+			return;
+		}
+		$id = wp_insert_post(
+			array(
+				'post_type'    => 'page',
+				'post_status'  => 'publish',
+				'post_title'   => 'Products For You',
+				'post_name'    => 'for-you',
+				'post_content' => "<!-- wp:shortcode -->\n[sophie_for_you_all]\n<!-- /wp:shortcode -->",
+			)
+		);
+		if ( $id && ! is_wp_error( $id ) ) {
+			update_option( 'sophie_rec_page_id', (int) $id, false );
+		}
+	}
+
 	public static function init(): void {
+		add_action( 'admin_init', array( __CLASS__, 'ensure_page' ) );
 		add_action( 'admin_menu', array( __CLASS__, 'menu' ), 60 );
 		add_action( 'admin_init', array( __CLASS__, 'register' ) );
 		add_action( 'admin_post_sophie_rec_rebuild', array( __CLASS__, 'rebuild' ) );
@@ -26,6 +50,7 @@ final class Sophie_Rec_Admin {
 	}
 
 	public static function register(): void {
+		register_setting( 'sophie_rec', 'sophie_rec_page_id', array( 'type' => 'integer', 'sanitize_callback' => 'absint' ) );
 		register_setting(
 			'sophie_rec',
 			'sophie_rec_settings',
@@ -72,8 +97,17 @@ final class Sophie_Rec_Admin {
 			<?php endif; ?>
 
 			<h2><?php esc_html_e( 'How to show it', 'sophie-rec' ); ?></h2>
-			<p><?php esc_html_e( 'Add this shortcode to your home page (any page builder has a "Shortcode" element):', 'sophie-rec' ); ?></p>
-			<p><code>[sophie_for_you]</code> &nbsp; <?php esc_html_e( 'or', 'sophie-rec' ); ?> &nbsp; <code>[sophie_for_you title="Products For You" limit="8" columns="4"]</code></p>
+			<p><?php esc_html_e( 'Home page: add a "Shortcode" element (Elementor) with:', 'sophie-rec' ); ?> <code>[sophie_for_you]</code> &nbsp; <?php esc_html_e( 'or', 'sophie-rec' ); ?> &nbsp; <code>[sophie_for_you title="Products For You" limit="4" columns="4"]</code></p>
+			<p><?php esc_html_e( 'To use your own Elementor heading instead, add the shortcode with title="" and link your heading to the "See all" page:', 'sophie-rec' ); ?> <code>[sophie_for_you title=""]</code></p>
+			<p><?php esc_html_e( '"See all" page (all recommendations, best first):', 'sophie-rec' ); ?>
+				<?php $all = Sophie_Rec_Frontend::all_url(); ?>
+				<?php if ( $all ) : ?>
+					<a href="<?php echo esc_url( $all ); ?>" target="_blank"><?php echo esc_html( $all ); ?></a>
+					· <a href="<?php echo esc_url( get_edit_post_link( (int) get_option( 'sophie_rec_page_id' ) ) ); ?>"><?php esc_html_e( 'edit page', 'sophie-rec' ); ?></a>
+				<?php else : ?>
+					<?php esc_html_e( 'not found – create a page containing [sophie_for_you_all] and set its ID below.', 'sophie-rec' ); ?>
+				<?php endif; ?>
+			</p>
 
 			<h2><?php esc_html_e( 'Model status', 'sophie-rec' ); ?></h2>
 			<table class="widefat striped" style="max-width:720px">
@@ -127,7 +161,8 @@ final class Sophie_Rec_Admin {
 				<?php settings_fields( 'sophie_rec' ); ?>
 				<table class="form-table" role="presentation">
 					<tr><th><?php esc_html_e( 'Section title', 'sophie-rec' ); ?></th><td><input name="sophie_rec_settings[title]" value="<?php echo esc_attr( $s['title'] ); ?>" class="regular-text"></td></tr>
-					<tr><th><?php esc_html_e( 'Number of products', 'sophie-rec' ); ?></th><td><input type="number" min="1" max="24" name="sophie_rec_settings[limit]" value="<?php echo esc_attr( $s['limit'] ); ?>"></td></tr>
+					<tr><th><?php esc_html_e( '"See all" page ID', 'sophie-rec' ); ?></th><td><input type="number" min="0" name="sophie_rec_page_id" value="<?php echo esc_attr( (int) get_option( 'sophie_rec_page_id' ) ); ?>"></td></tr>
+					<tr><th><?php esc_html_e( 'Number of products (home page)', 'sophie-rec' ); ?></th><td><input type="number" min="1" max="24" name="sophie_rec_settings[limit]" value="<?php echo esc_attr( $s['limit'] ); ?>"></td></tr>
 					<tr><th><?php esc_html_e( 'Columns (desktop)', 'sophie-rec' ); ?></th><td><input type="number" min="1" max="6" name="sophie_rec_settings[columns]" value="<?php echo esc_attr( $s['columns'] ); ?>"></td></tr>
 					<tr><th><?php esc_html_e( 'Learn from browsing', 'sophie-rec' ); ?></th><td><label><input type="checkbox" name="sophie_rec_settings[tracking]" value="1" <?php checked( $s['tracking'] ); ?>> <?php esc_html_e( 'Record anonymous "viewed together" data (random session number only, no personal data). Recommended: purchases alone are sparse.', 'sophie-rec' ); ?></label></td></tr>
 					<tr><th><?php esc_html_e( 'Related products', 'sophie-rec' ); ?></th><td><label><input type="checkbox" name="sophie_rec_settings[related]" value="1" <?php checked( $s['related'] ); ?>> <?php esc_html_e( 'Also use learned "bought/viewed together" items for the Related products on product pages.', 'sophie-rec' ); ?></label></td></tr>

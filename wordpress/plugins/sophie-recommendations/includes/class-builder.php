@@ -173,7 +173,7 @@ final class Sophie_Rec_Builder {
 			$data[]       = $wpdb->prepare( '(%d,%d,%d,%f,%d)', $id, $leaf, $top, $trend[ $id ] ?? 0, isset( $oos[ $id ] ) ? 0 : 1 );
 		}
 		self::swap_table( Sophie_Rec_Store::items_table(), '(product_id, leaf_cat, top_cat, trend, in_stock)', $data );
-		wp_cache_delete( 'trending_60_' . Sophie_Rec_Store::model_version(), 'sophie_rec' );
+		wp_cache_delete( 'trending_150_' . Sophie_Rec_Store::model_version(), 'sophie_rec' );
 		update_option( 'sophie_rec_trending_at', time(), false );
 		return $items;
 	}

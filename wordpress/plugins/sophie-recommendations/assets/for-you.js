@@ -57,30 +57,76 @@
 	}, true);
 
 	// ---- the section ---------------------------------------------------------
-	function load(section) {
-		var grid = section.querySelector('.sophie-for-you__grid');
+	function url(section, offset) {
 		var h = (get(HISTORY) || []).slice(0, 10);
 		var p = (get(BOUGHT) || []).slice(0, 10);
 		// Only the visitor's history is in the URL: new visitors all share one
 		// cacheable URL, and the same history always gets the same answer.
-		var url = cfg.ajax + '?action=sophie_rec_for_you' +
-			'&n=' + encodeURIComponent(section.getAttribute('data-limit') || 8) +
+		return cfg.ajax + '?action=sophie_rec_for_you' +
+			'&n=' + encodeURIComponent(section.getAttribute('data-limit') || 4) +
+			'&o=' + offset +
 			'&c=' + encodeURIComponent(section.getAttribute('data-columns') || 4) +
 			'&h=' + h.join(',') + '&p=' + p.join(',') + '&v=' + (cfg.version || 0);
-		fetch(url, { credentials: 'omit' })
-			.then(function (r) { return r.ok ? r.text() : ''; })
-			.then(function (html) {
-				if (!html || html.replace(/\s/g, '').length < 20) { section.style.display = 'none'; return; }
-				grid.innerHTML = html;
-				grid.removeAttribute('aria-busy');
-				section.classList.add('is-loaded');
-				if (window.jQuery) {
-					// Let the theme (lazy images, wishlist/quick-view buttons) initialise the new cards.
-					window.jQuery(document.body).trigger('sophie_for_you_loaded', [section]).trigger('post-load');
-					window.jQuery(window).trigger('resize').trigger('scroll');
-				}
-			})
-			.catch(function () { section.style.display = 'none'; });
+	}
+
+	function themeRefresh(section) {
+		if (window.jQuery) {
+			// Let the theme (lazy images, wishlist / quick-view buttons) initialise the new cards.
+			window.jQuery(document.body).trigger('sophie_for_you_loaded', [section]).trigger('post-load');
+			window.jQuery(window).trigger('resize').trigger('scroll');
+		}
+	}
+
+	function load(section) {
+		var grid = section.querySelector('.sophie-for-you__grid');
+		var all = section.getAttribute('data-mode') === 'all';
+		var per = parseInt(section.getAttribute('data-limit'), 10) || 4;
+		var more = section.querySelector('.sophie-for-you__more');
+		var offset = 0, busy = false, done = false, sentinel = null;
+
+		function next() {
+			if (busy || done) { return; }
+			busy = true;
+			if (more) { more.querySelector('button').disabled = true; }
+			fetch(url(section, offset), { credentials: 'omit' })
+				.then(function (r) {
+					var hasMore = r.headers.get('X-Sophie-More') === '1';
+					return r.ok ? r.text().then(function (t) { return { html: t, more: hasMore }; }) : { html: '', more: false };
+				})
+				.then(function (res) {
+					var empty = !res.html || res.html.replace(/\s/g, '').length < 20;
+					if (offset === 0) {
+						if (empty) { section.style.display = 'none'; done = true; return; }
+						grid.innerHTML = '';
+						grid.removeAttribute('aria-busy');
+						section.classList.add('is-loaded');
+					}
+					if (!empty) { grid.insertAdjacentHTML('beforeend', res.html); }
+					offset += per;
+					done = !all || !res.more || empty;
+					themeRefresh(section);
+				})
+				.catch(function () { if (offset === 0) { section.style.display = 'none'; } done = true; })
+				.then(function () {
+					busy = false;
+					if (!more) { return; }
+					more.hidden = done;
+					more.querySelector('button').disabled = false;
+					if (done && sentinel) { sentinel.disconnect(); }
+				});
+		}
+
+		if (all && more) {
+			more.querySelector('button').addEventListener('click', next);
+			if ('IntersectionObserver' in window) {
+				// Infinite scroll: load the next page before the visitor reaches the end.
+				sentinel = new IntersectionObserver(function (entries) {
+					if (entries[0].isIntersecting && offset > 0) { next(); }
+				}, { rootMargin: '800px 0px' });
+				sentinel.observe(more);
+			}
+		}
+		next();
 	}
 
 	function init() {
